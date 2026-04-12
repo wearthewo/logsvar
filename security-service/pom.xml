@@ -6,9 +6,10 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>com.monitoring</groupId>
-        <artifactId>monitoring-app</artifactId>
-        <version>1.0.0</version>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.0</version>
+        <relativePath/>
     </parent>
 
     <groupId>com.monitoring</groupId>
@@ -16,6 +17,11 @@
     <version>0.0.1-SNAPSHOT</version>
     <name>security-service</name>
     <description>Security Event Processing Service</description>
+
+    <properties>
+        <spring-kafka.version>3.1.4</spring-kafka.version>
+        <resilience4j.version>2.1.0</resilience4j.version>
+    </properties>
 
     <dependencies>
         <!-- Spring Boot Starter Web -->
@@ -28,6 +34,7 @@
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
+            <version>${spring-kafka.version}</version>
         </dependency>
 
         <!-- Spring Data JPA -->
