@@ -1,0 +1,378 @@
+name: Release and Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      skip_tests:
+        description: 'Skip tests'
+        required: false
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: logsvar
+
+jobs:
+  # Full CI pipeline
+  ci:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_tests != 'true'
+    
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: monitoring
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+      
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+      
+      kafka:
+        image: confluentinc/cp-kafka:latest
+        env:
+          KAFKA_ZOOKEEPER_CONNECT: localhost:2181
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+        ports:
+          - 9092:9092
+        options: >-
+          --health-cmd="kafka-broker-api-versions --bootstrap-server localhost:9092"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: ${{ runner.os }}-pip
+
+      - name: Run backend tests
+        run: |
+          cd monitoring-backend
+          mvn clean test
+          mvn jacoco:report
+
+      - name: Run alerts-service tests
+        run: |
+          cd alerts-service
+          mvn clean test
+          mvn jacoco:report
+
+      - name: Run api-gateway tests
+        run: |
+          cd api-gateway
+          mvn clean test
+          mvn jacoco:report
+
+      - name: Run AI agent tests
+        run: |
+          cd ai-agent
+          pip install -r requirements.txt
+          python -m pytest tests/ -v
+
+      - name: Run integration tests
+        run: |
+          python test-integration.py
+          python test-resilience-patterns.py
+          python test-security-hardening.py
+
+      - name: Upload test coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: '**/target/site/jacoco/jacoco.xml'
+
+  # Build and push Docker images
+  build-images:
+    runs-on: ubuntu-latest
+    needs: ci
+    if: always() && (needs.ci.result == 'success' || github.event.inputs.skip_tests == 'true')
+    
+    strategy:
+      matrix:
+        service: [monitoring-backend, alerts-service, api-gateway, ai-agent]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION=${{ github.event.inputs.version }}
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Create GitHub release
+  create-release:
+    runs-on: ubuntu-latest
+    needs: build-images
+    if: always() && needs.build-images.result == 'success'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION=${{ github.event.inputs.version }}
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+          
+          if [[ -n "$PREV_TAG" ]]; then
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD)
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)")
+          fi
+          
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## Changes
+            ${{ steps.changelog.outputs.changelog }}
+            
+            ## Docker Images
+            - ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/monitoring-backend:${{ steps.version.outputs.version }}
+            - ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/alerts-service:${{ steps.version.outputs.version }}
+            - ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/api-gateway:${{ steps.version.outputs.version }}
+            - ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/ai-agent:${{ steps.version.outputs.version }}
+            
+            ## Deployment
+            This release will be automatically deployed to production after approval.
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Update production kustomize image tags
+  update-kustomize:
+    runs-on: ubuntu-latest
+    needs: create-release
+    if: always() && needs.create-release.result == 'success'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION=${{ github.event.inputs.version }}
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update production kustomize
+        run: |
+          # Update production kustomization with new version
+          cd infra/gitops/production
+          
+          # Update image tags
+          kustomize edit set image monitoring-backend=ghcr.io/${{ env.IMAGE_PREFIX }}/monitoring-backend:${{ steps.version.outputs.version }}
+          kustomize edit set image alerts-service=ghcr.io/${{ env.IMAGE_PREFIX }}/alerts-service:${{ steps.version.outputs.version }}
+          kustomize edit set image api-gateway=ghcr.io/${{ env.IMAGE_PREFIX }}/api-gateway:${{ steps.version.outputs.version }}
+          kustomize edit set image ai-agent=ghcr.io/${{ env.IMAGE_PREFIX }}/ai-agent:${{ steps.version.outputs.version }}
+
+      - name: Commit and push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add infra/gitops/production/kustomization.yml
+          git commit -m "chore: Update production kustomize for ${{ steps.version.outputs.version }}"
+          git push
+
+  # Deploy to production (requires approval)
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: update-kustomize
+    if: always() && needs.update-kustomize.result == 'success'
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+          else
+            VERSION=${{ github.event.inputs.version }}
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > kubeconfig
+          export KUBECONFIG=kubeconfig
+
+      - name: Verify cluster access
+        run: |
+          export KUBECONFIG=kubeconfig
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Deploy to production
+        run: |
+          export KUBECONFIG=kubeconfig
+          export VERSION=${{ steps.version.outputs.version }}
+          
+          echo "Deploying version $VERSION to production..."
+          
+          # Apply production manifests
+          cd infra/gitops/production
+          kubectl apply -k . --validate=false
+          
+          # Wait for rollout
+          kubectl rollout status deployment/monitoring-backend -n monitoring-app --timeout=300s
+          kubectl rollout status deployment/alerts-service -n monitoring-app --timeout=300s
+          kubectl rollout status deployment/api-gateway -n monitoring-app --timeout=300s
+          kubectl rollout status deployment/ai-agent -n monitoring-app --timeout=300s
+          
+          echo "Production deployment completed successfully!"
+
+      - name: Record deployment audit
+        run: |
+          # TODO: Implement deployment audit script
+          # python scripts/record-deployment-audit.py \
+          #   --service=all \
+          #   --version=${{ steps.version.outputs.version }} \
+          #   --environment=production \
+          #   --triggered-by=${{ github.actor }} \
+          #   --commit-sha=${{ github.sha }} \
+          #   --status=success
+          echo "Deployment audit recorded (TODO: implement script)"
+
+      - name: Health check
+        run: |
+          # Wait for services to be ready
+          sleep 30
+          
+          # Check service health
+          curl -f https://api.monitoring-platform.com/actuator/health || exit 1
+          curl -f https://alerts.monitoring-platform.com/actuator/health || exit 1
+          curl -f https://gateway.monitoring-platform.com/actuator/health || exit 1
+          
+          echo "All services are healthy!"
+
+      - name: Emit deployment metrics
+        run: |
+          # TODO: Implement deployment metrics script
+          # python scripts/emit-deployment-metrics.py \
+          #   --service=monitoring-backend \
+          #   --environment=production \
+          #   --version=${{ steps.version.outputs.version }} \
+          #   --status=success \
+          #   --duration=${{ job.status }}
+          echo "Deployment metrics emitted (TODO: implement script)"

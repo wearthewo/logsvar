@@ -1,0 +1,366 @@
+
+  version: '3.8'
+
+  services:
+    zookeeper:
+      image: confluentinc/cp-zookeeper:7.6.0
+      hostname: zookeeper
+      container_name: zookeeper
+      restart: unless-stopped
+      ports:
+        - "2181:2181"
+      environment:
+        ZOOKEEPER_CLIENT_PORT: 2181
+        ZOOKEEPER_TICK_TIME: 2000
+      volumes:
+        - zookeeper-data:/var/lib/zookeeper/data
+        - zookeeper-logs:/var/lib/zookeeper/log
+      healthcheck:
+        test: ["CMD", "nc", "-z", "localhost", "2181"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
+        start_period: 10s
+      networks:
+        - monitoring-network
+
+    kafka:
+      image: confluentinc/cp-kafka:7.6.0
+      hostname: kafka
+      container_name: kafka
+      restart: unless-stopped
+      depends_on:
+        zookeeper:
+          condition: service_healthy
+      ports:
+        - "9092:9092"
+      environment:
+        KAFKA_BROKER_ID: 1
+        KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+        KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+        KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+        KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+        KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+        KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+        KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+        KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+        KAFKA_JMX_PORT: 9101
+        KAFKA_JMX_HOSTNAME: localhost
+      volumes:
+        - kafka-data:/var/lib/kafka/data
+      healthcheck:
+        test: ["CMD-SHELL", "kafka-topics --bootstrap-server kafka:29092 --list || exit 1"]
+        interval: 15s
+        timeout: 10s
+        retries: 5
+        start_period: 30s
+      networks:
+        - monitoring-network
+
+    kafka-init:
+      image: confluentinc/cp-kafka:7.6.0
+      container_name: kafka-init
+      depends_on:
+        kafka:
+          condition: service_healthy
+      restart: "no"
+      entrypoint: ["/bin/sh", "-c"]
+      command: >
+        sh -c "
+        echo 'Waiting for Kafka...';
+        kafka-topics --bootstrap-server kafka:29092 --list;
+        echo 'Creating topics...';
+        kafka-topics --create --topic monitoring.events --partitions 3 --replication-factor 1 --bootstrap-server kafka:29092 --if-not-exists;
+        kafka-topics --create --topic monitoring.anomalies --partitions 3 --replication-factor 1 --bootstrap-server kafka:29092 --if-not-exists;
+        kafka-topics --create --topic monitoring.alerts --partitions 1 --replication-factor 1 --bootstrap-server kafka:29092 --if-not-exists;
+        kafka-topics --create --topic monitoring.anomalies.dlq --partitions 1 --replication-factor 1 --bootstrap-server kafka:29092 --if-not-exists;
+        echo 'Topics created successfully';
+        "
+      networks:
+        - monitoring-network
+
+    mysql:
+      image: mysql:8.0
+      hostname: mysql
+      container_name: mysql
+      restart: unless-stopped
+      ports:
+        - "3306:3306"
+      environment:
+        MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-secret}
+        MYSQL_DATABASE: ${MYSQL_DATABASE:-monitoring}
+        MYSQL_PASSWORD: ${MYSQL_PASSWORD:-secret}
+        MYSQL_USER: ${MYSQL_USER:-monitoring}
+      volumes:
+        - mysql-data:/var/lib/mysql
+        - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      command: --default-authentication-plugin=mysql_native_password
+      healthcheck:
+        test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD"]
+        interval: 10s
+        timeout: 5s
+        retries: 5
+        start_period: 30s
+      networks:
+        - monitoring-network
+
+    redis:
+      image: redis:7.2-alpine
+      hostname: redis
+      container_name: redis
+      restart: unless-stopped
+      ports:
+        - "6379:6379"
+      volumes:
+        - redis-data:/data
+      command: redis-server --appendonly yes
+      healthcheck:
+        test: ["CMD", "redis-cli", "ping"]
+        interval: 5s
+        timeout: 3s
+        retries: 5
+        start_period: 10s
+      networks:
+        - monitoring-network
+
+    monitoring-backend:
+      image: openjdk:21-jdk-slim
+      hostname: monitoring-backend
+      container_name: monitoring-backend
+      restart: unless-stopped
+      depends_on:
+        kafka:
+          condition: service_healthy
+        mysql:
+          condition: service_healthy
+        redis:
+          condition: service_healthy
+      expose:
+        - "8080"
+      environment:
+        SPRING_PROFILES_ACTIVE: docker
+        KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+        SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/monitoring
+        SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-monitoring}
+        SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-secret}
+        SPRING_DATA_REDIS_HOST: redis
+        SPRING_DATA_REDIS_PORT: 6379
+        GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-change-me-in-prod-min-32-chars}
+      volumes:
+        - ../monitoring-backend/target/monitoring-backend-0.0.1-SNAPSHOT.jar:/app.jar:ro
+      working_dir: /app
+      command: java -jar /app.jar
+      healthcheck:
+        test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 60s
+      networks:
+        - monitoring-network
+
+    alerts-service:
+      image: openjdk:21-jdk-slim
+      hostname: alerts-service
+      container_name: alerts-service
+      restart: unless-stopped
+      depends_on:
+        kafka:
+          condition: service_healthy
+        mysql:
+          condition: service_healthy
+        redis:
+          condition: service_healthy
+      expose:
+        - "8081"
+      environment:
+        SPRING_PROFILES_ACTIVE: docker
+        KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+        SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/monitoring
+        SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-monitoring}
+        SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:-secret}
+        SPRING_DATA_REDIS_HOST: redis
+        SPRING_DATA_REDIS_PORT: 6379
+        SMTP_HOST: ${SMTP_HOST:-}
+        SMTP_PORT: ${SMTP_PORT:-587}
+        SMTP_USER: ${SMTP_USER:-}
+        SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+        SMTP_FROM: ${SMTP_FROM:-alerts@monitoring.local}
+        SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+        GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-change-me-in-prod-min-32-chars}
+      volumes:
+        - ../alerts-service/target/alerts-service-0.0.1-SNAPSHOT.jar:/app.jar:ro
+      working_dir: /app
+      command: java -jar /app.jar
+      healthcheck:
+        test: ["CMD-SHELL", "curl -f http://localhost:8081/actuator/health || exit 1"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 60s
+      networks:
+        - monitoring-network
+
+    ai-agent:
+      image: python:3.12-slim
+      hostname: ai-agent
+      container_name: ai-agent
+      restart: unless-stopped
+      depends_on:
+        kafka:
+          condition: service_healthy
+        mysql:
+          condition: service_healthy
+        redis:
+          condition: service_healthy
+      # No external ports - fully internal service
+      environment:
+        KAFKA_BOOTSTRAP: kafka:29092
+        REDIS_URL: redis://redis:6379
+        MYSQL_HOST: mysql
+        MYSQL_PORT: 3306
+        MYSQL_DATABASE: monitoring
+        MYSQL_USER: ${MYSQL_USER:-monitoring}
+        MYSQL_PASSWORD: ${MYSQL_PASSWORD:-secret}
+        OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+        OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma:7b}
+        GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:-change-me-in-prod-min-32-chars}
+      volumes:
+        - ../ai-agent:/app
+      working_dir: /app
+      command: >
+        sh -c "
+        pip install -r requirements.txt &&
+        uvicorn main:app --host 0.0.0.0 --port 8001
+        "
+      healthcheck:
+        test: ["CMD-SHELL", "curl -f http://localhost:8001/health || exit 1"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 60s
+      networks:
+        - monitoring-network
+
+    api-gateway:
+      build: ../api-gateway
+      hostname: api-gateway
+      container_name: api-gateway
+      restart: unless-stopped
+      depends_on:
+        monitoring-backend:
+          condition: service_started
+        alerts-service:
+          condition: service_started
+      ports:
+        - "8082:8080"
+      environment:
+        SPRING_PROFILES_ACTIVE: docker
+        # OAuth2 Configuration
+        OAUTH2_JWK_SET_URI: ${OAUTH2_JWK_SET_URI:-http://keycloak:8180/realms/monitoring/protocol/openid-connect/certs}
+        OAUTH2_ISSUER_URI: ${OAUTH2_ISSUER_URI:-http://keycloak:8180/realms/monitoring}
+        OAUTH2_AUDIENCE: ${OAUTH2_AUDIENCE:-monitoring-app}
+        # CORS Configuration
+        ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-http://localhost:5173}
+        # Redis Configuration
+        REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      healthcheck:
+        test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 60s
+      networks:
+        - monitoring-network
+
+    prometheus:
+      image: prom/prometheus:latest
+      hostname: prometheus
+      container_name: prometheus
+      restart: unless-stopped
+      ports:
+        - "9090:9090"
+      volumes:
+        - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+        - ./prometheus/rules:/etc/prometheus/rules:ro
+      command:
+        - '--config.file=/etc/prometheus/prometheus.yml'
+        - '--storage.tsdb.path=/prometheus'
+        - '--web.console.libraries=/etc/prometheus/console_libraries'
+        - '--web.console.templates=/etc/prometheus/consoles'
+        - '--storage.tsdb.retention.time=200h'
+        - '--web.enable-lifecycle'
+      networks:
+        - monitoring-network
+
+    grafana:
+      image: grafana/grafana:latest
+      hostname: grafana
+      container_name: grafana
+      restart: unless-stopped
+      ports:
+        - "3000:3000"
+      environment:
+        GF_SECURITY_ADMIN_USER: admin
+        GF_SECURITY_ADMIN_PASSWORD: admin
+        GF_INSTALL_PLUGINS: grafana-mysql-datasource
+      volumes:
+        - ./grafana/provisioning:/etc/grafana/provisioning
+        - ./grafana/provisioning/dashboards:/etc/grafana/dashboards
+      networks:
+        - monitoring-network
+
+    loki:
+      image: grafana/loki:latest
+      hostname: loki
+      container_name: loki
+      restart: unless-stopped
+      ports:
+        - "3100:3100"
+      volumes:
+        - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+        - loki-data:/loki
+      command: -config.file=/etc/loki/local-config.yaml
+      networks:
+        - monitoring-network
+
+    promtail:
+      image: grafana/promtail:latest
+      hostname: promtail
+      container_name: promtail
+      restart: unless-stopped
+      volumes:
+        - ./loki/promtail-config.yml:/etc/promtail/config.yml:ro
+        - /var/log:/var/log:ro
+        - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      command: -config.file=/etc/promtail/config.yml
+      depends_on:
+        - loki
+      networks:
+        - monitoring-network
+
+    keda:
+      image: kedacore/keda:2.12.0
+      hostname: keda
+      container_name: keda
+      restart: unless-stopped
+      ports:
+        - "8080:8080"
+      environment:
+        KEDA_OPERATOR_METRICS_PORT: "8080"
+      command: /keda --metrics-address=:8080
+      networks:
+        - monitoring-network
+
+  volumes:
+    zookeeper-data:
+    zookeeper-logs:
+    kafka-data:
+    mysql-data:
+    redis-data:
+    loki-data:
+
+  networks:
+    monitoring-network:
+      driver: bridge
+

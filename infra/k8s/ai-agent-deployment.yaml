@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-agent
+  namespace: monitoring-app
+  labels:
+    app: ai-agent
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-agent
+  template:
+    metadata:
+      labels:
+        app: ai-agent
+    spec:
+      containers:
+      - name: ai-agent
+        image: ai-agent:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8001
+        env:
+        - name: KAFKA_BOOTSTRAP
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: REDIS_URL
+        - name: MYSQL_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: MYSQL_HOST
+        - name: MYSQL_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: MYSQL_PORT
+        - name: MYSQL_DATABASE
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: MYSQL_DATABASE
+        - name: MYSQL_USER
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: SPRING_DATASOURCE_USERNAME
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: SPRING_DATASOURCE_PASSWORD
+        - name: OLLAMA_URL
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: OLLAMA_URL
+        - name: OLLAMA_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: OLLAMA_MODEL
+        - name: GATEWAY_INTERNAL_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: GATEWAY_INTERNAL_SECRET
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-agent
+  namespace: monitoring-app
+spec:
+  selector:
+    app: ai-agent
+  ports:
+  - protocol: TCP
+    port: 8001
+    targetPort: 8001
+  type: ClusterIP

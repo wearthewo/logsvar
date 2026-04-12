@@ -1,0 +1,17 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: alerts-service-scaler
+  namespace: monitoring-app
+spec:
+  scaleTargetRef:
+    name: alerts-service
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka:9092
+        consumerGroup: alerts-service-consumer
+        topic: monitoring.anomalies
+        lagThreshold: "50"

@@ -1,0 +1,282 @@
+name: Rollback Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service to rollback (monitoring-backend, alerts-service, api-gateway, ai-agent, or all)'
+        required: true
+        type: string
+      previous_version:
+        description: 'Previous version tag to rollback to (e.g., v1.0.0)'
+        required: true
+        type: string
+      environment:
+        description: 'Target environment (staging or production)'
+        required: true
+        type: string
+        default: 'production'
+      reason:
+        description: 'Reason for rollback'
+        required: false
+        type: string
+        default: 'Manual rollback'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: logsvar
+
+jobs:
+  validate-rollback:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: |
+          SERVICE="${{ github.event.inputs.service }}"
+          VERSION="${{ github.event.inputs.previous_version }}"
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          
+          # Validate service
+          if [[ "$SERVICE" != "monitoring-backend" && "$SERVICE" != "alerts-service" && "$SERVICE" != "api-gateway" && "$SERVICE" != "ai-agent" && "$SERVICE" != "all" ]]; then
+            echo "Invalid service: $SERVICE"
+            exit 1
+          fi
+          
+          # Validate environment
+          if [[ "$ENVIRONMENT" != "staging" && "$ENVIRONMENT" != "production" ]]; then
+            echo "Invalid environment: $ENVIRONMENT"
+            exit 1
+          fi
+          
+          # Validate version format
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version format: $VERSION (expected v*.*.*)"
+            exit 1
+          fi
+          
+          echo "Validation passed: service=$SERVICE, version=$VERSION, environment=$ENVIRONMENT"
+
+      - name: Check image exists
+        run: |
+          SERVICE="${{ github.event.inputs.service }}"
+          VERSION="${{ github.event.inputs.previous_version }}"
+          
+          if [[ "$SERVICE" == "all" ]]; then
+            SERVICES=("monitoring-backend" "alerts-service" "api-gateway" "ai-agent")
+          else
+            SERVICES=("$SERVICE")
+          fi
+          
+          for svc in "${SERVICES[@]}"; do
+            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/$svc:$VERSION"
+            
+            if ! docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+              echo "Image not found: $IMAGE"
+              exit 1
+            fi
+            echo "Image found: $IMAGE"
+          done
+
+  rollback-deployment:
+    runs-on: ubuntu-latest
+    needs: validate-rollback
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'v1.28.0'
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > kubeconfig
+          export KUBECONFIG=kubeconfig
+
+      - name: Verify cluster access
+        run: |
+          export KUBECONFIG=kubeconfig
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Get current deployment info
+        run: |
+          export KUBECONFIG=kubeconfig
+          NAMESPACE="monitoring-app"
+          
+          SERVICE="${{ github.event.inputs.service }}"
+          VERSION="${{ github.event.inputs.previous_version }}"
+          
+          echo "Current deployment status:"
+          if [[ "$SERVICE" == "all" ]]; then
+            for svc in monitoring-backend alerts-service api-gateway ai-agent; do
+              echo "=== $svc ==="
+              kubectl get deployment $svc -n $NAMESPACE -o yaml | grep -A 5 "image:"
+            done
+          else
+            kubectl get deployment $SERVICE -n $NAMESPACE -o yaml | grep -A 5 "image:"
+          fi
+
+      - name: Perform rollback
+        run: |
+          export KUBECONFIG=kubeconfig
+          NAMESPACE="monitoring-app"
+          
+          SERVICE="${{ github.event.inputs.service }}"
+          VERSION="${{ github.event.inputs.previous_version }}"
+          REASON="${{ github.event.inputs.reason }}"
+          
+          echo "Rolling back $SERVICE to version $VERSION in $NAMESPACE..."
+          
+          if [[ "$SERVICE" == "all" ]]; then
+            SERVICES=("monitoring-backend" "alerts-service" "api-gateway" "ai-agent")
+          else
+            SERVICES=("$SERVICE")
+          fi
+          
+          for svc in "${SERVICES[@]}"; do
+            echo "=== Rolling back $svc ==="
+            
+            # Get current image
+            CURRENT_IMAGE=$(kubectl get deployment $svc -n $NAMESPACE -o jsonpath='{.spec.template.spec.containers[0].image}')
+            echo "Current image: $CURRENT_IMAGE"
+            
+            # Update deployment with new image
+            NEW_IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/$svc:$VERSION"
+            kubectl set image deployment/$svc $svc=$NEW_IMAGE -n $NAMESPACE
+            
+            # Wait for rollout
+            echo "Waiting for rollout of $svc..."
+            kubectl rollout status deployment/$svc -n $NAMESPACE --timeout=300s
+            
+            # Verify new image
+            ACTUAL_IMAGE=$(kubectl get deployment $svc -n $NAMESPACE -o jsonpath='{.spec.template.spec.containers[0].image}')
+            if [[ "$ACTUAL_IMAGE" == "$NEW_IMAGE" ]]; then
+              echo "Rollback successful for $svc"
+            else
+              echo "Rollback failed for $svc: expected $NEW_IMAGE, got $ACTUAL_IMAGE"
+              exit 1
+            fi
+          done
+          
+          echo "Rollback completed successfully!"
+
+      - name: Health check
+        run: |
+          export KUBECONFIG=kubeconfig
+          NAMESPACE="monitoring-app"
+          
+          echo "Waiting for services to be ready..."
+          sleep 30
+          
+          # Check pod status
+          kubectl get pods -n $NAMESPACE
+          
+          # Check service health
+          if [[ "${{ github.event.inputs.environment }}" == "production" ]]; then
+            # Production endpoints
+            curl -f https://api.monitoring-platform.com/actuator/health || exit 1
+            curl -f https://alerts.monitoring-platform.com/actuator/health || exit 1
+            curl -f https://gateway.monitoring-platform.com/actuator/health || exit 1
+          else
+            # Staging endpoints
+            curl -f https://staging-api.monitoring-platform.com/actuator/health || exit 1
+            curl -f https://staging-alerts.monitoring-platform.com/actuator/health || exit 1
+            curl -f https://staging-gateway.monitoring-platform.com/actuator/health || exit 1
+          fi
+          
+          echo "All services are healthy after rollback!"
+
+      - name: Record rollback audit
+        run: |
+          SERVICE="${{ github.event.inputs.service }}"
+          VERSION="${{ github.event.inputs.previous_version }}"
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          REASON="${{ github.event.inputs.reason }}"
+          
+          # TODO: Implement deployment audit script
+          # python scripts/record-deployment-audit.py \
+          #   --service=$SERVICE \
+          #   --version=$VERSION \
+          #   --environment=$ENVIRONMENT \
+          #   --triggered-by=${{ github.actor }} \
+          #   --commit-sha=${{ github.sha }} \
+          #   --status=rollback \
+          #   --reason="$REASON"
+          echo "Rollback audit recorded (TODO: implement script)"
+
+      - name: Emit rollback metrics
+        run: |
+          SERVICE="${{ github.event.inputs.service }}"
+          VERSION="${{ github.event.inputs.previous_version }}"
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          
+          # TODO: Implement deployment metrics script
+          # python scripts/emit-deployment-metrics.py \
+          #   --service=$SERVICE \
+          #   --environment=$ENVIRONMENT \
+          #   --version=$VERSION \
+          #   --status=rollback \
+          #   --duration=${{ job.status }}
+          echo "Rollback metrics emitted (TODO: implement script)"
+
+      - name: Notify rollback
+        run: |
+          SERVICE="${{ github.event.inputs.service }}"
+          VERSION="${{ github.event.inputs.previous_version }}"
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          REASON="${{ github.event.inputs.reason }}"
+          
+          # Send Slack notification (if webhook is configured)
+          if [[ -n "${{ secrets.SLACK_WEBHOOK_URL }}" ]]; then
+            curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+              -H 'Content-type: application/json' \
+              --data "{
+                \"text\": \"Rollback Completed\",
+                \"attachments\": [
+                  {
+                    \"color\": \"warning\",
+                    \"fields\": [
+                      {\"title\": \"Service\", \"value\": \"$SERVICE\", \"short\": true},
+                      {\"title\": \"Environment\", \"value\": \"$ENVIRONMENT\", \"short\": true},
+                      {\"title\": \"Version\", \"value\": \"$VERSION\", \"short\": true},
+                      {\"title\": \"Triggered By\", \"value\": \"${{ github.actor }}\", \"short\": true},
+                      {\"title\": \"Reason\", \"value\": \"$REASON\", \"short\": false}
+                    ],
+                    \"ts\": $(date +%s)
+                  }
+                ]
+              }"
+          fi
+
+      - name: Update GitOps manifests
+        run: |
+          SERVICE="${{ github.event.inputs.service }}"
+          VERSION="${{ github.event.inputs.previous_version }}"
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          
+          # Update kustomize to reflect rollback
+          cd "infra/gitops/$ENVIRONMENT"
+          
+          if [[ "$SERVICE" == "all" ]]; then
+            kustomize edit set image monitoring-backend=ghcr.io/${{ env.IMAGE_PREFIX }}/monitoring-backend:$VERSION
+            kustomize edit set image alerts-service=ghcr.io/${{ env.IMAGE_PREFIX }}/alerts-service:$VERSION
+            kustomize edit set image api-gateway=ghcr.io/${{ env.IMAGE_PREFIX }}/api-gateway:$VERSION
+            kustomize edit set image ai-agent=ghcr.io/${{ env.IMAGE_PREFIX }}/ai-agent:$VERSION
+          else
+            kustomize edit set image $SERVICE=ghcr.io/${{ env.IMAGE_PREFIX }}/$SERVICE:$VERSION
+          fi
+          
+          # Commit changes
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add kustomization.yml
+          git commit -m "chore: Update $ENVIRONMENT kustomize after rollback to $VERSION"
+          git push

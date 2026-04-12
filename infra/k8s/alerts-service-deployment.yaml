@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alerts-service
+  namespace: monitoring-app
+  labels:
+    app: alerts-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: alerts-service
+  template:
+    metadata:
+      labels:
+        app: alerts-service
+    spec:
+      containers:
+      - name: alerts-service
+        image: alerts-service:0.0.1-SNAPSHOT
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8081
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: SPRING_PROFILES_ACTIVE
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: SPRING_DATASOURCE_URL
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: SPRING_DATASOURCE_URL
+        - name: SPRING_DATASOURCE_USERNAME
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: SPRING_DATASOURCE_USERNAME
+        - name: SPRING_DATASOURCE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: SPRING_DATASOURCE_PASSWORD
+        - name: SPRING_DATA_REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: SPRING_DATA_REDIS_HOST
+        - name: SPRING_DATA_REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: SPRING_DATA_REDIS_PORT
+        - name: GATEWAY_INTERNAL_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: GATEWAY_INTERNAL_SECRET
+        - name: SMTP_HOST
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: SMTP_HOST
+        - name: SMTP_PORT
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: SMTP_PORT
+        - name: SMTP_USER
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: SMTP_USER
+        - name: SMTP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: SMTP_PASSWORD
+        - name: SMTP_FROM
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: SMTP_FROM
+        - name: SLACK_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: SLACK_WEBHOOK_URL
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8081
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alerts-service
+  namespace: monitoring-app
+spec:
+  selector:
+    app: alerts-service
+  ports:
+  - protocol: TCP
+    port: 8081
+    targetPort: 8081
+  type: ClusterIP

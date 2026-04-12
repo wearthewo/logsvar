@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: monitoring-app
+  labels:
+    app: api-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+      - name: api-gateway
+        image: api-gateway:0.0.1-SNAPSHOT
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: SPRING_PROFILES_ACTIVE
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: monitoring-config
+              key: REDIS_URL
+        - name: OAUTH2_JWK_SET_URI
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: OAUTH2_JWK_SET_URI
+        - name: OAUTH2_ISSUER_URI
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: OAUTH2_ISSUER_URI
+        - name: OAUTH2_AUDIENCE
+          valueFrom:
+            secretKeyRef:
+              name: monitoring-secret
+              key: OAUTH2_AUDIENCE
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: monitoring-app
+spec:
+  selector:
+    app: api-gateway
+  ports:
+  - protocol: TCP
+    port: 8080
+    targetPort: 8080
+  type: LoadBalancer

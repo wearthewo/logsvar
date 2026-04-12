@@ -1,0 +1,17 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: ai-agent-scaler
+  namespace: monitoring-app
+spec:
+  scaleTargetRef:
+    name: ai-agent
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka:9092
+        consumerGroup: ai-agent-consumer
+        topic: monitoring.events
+        lagThreshold: "100"

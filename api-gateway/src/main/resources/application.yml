@@ -1,0 +1,130 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${OAUTH2_JWK_SET_URI}
+          issuer-uri: ${OAUTH2_ISSUER_URI}
+  
+  data:
+    redis:
+      url: ${REDIS_URL:redis://redis:6379}
+  
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:29092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+  
+  cloud:
+    gateway:
+      # Basic routes to backend services with rate limiting
+      routes:
+        # Monitoring Backend Routes
+        - id: events-ingest
+          uri: http://monitoring-backend:8080
+          predicates:
+            - Path=/api/events
+            - Method=POST
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+                key-resolver: "#{@userKeyResolver}"
+            - AddRequestHeader=X-Gateway-Secret, ${GATEWAY_INTERNAL_SECRET}
+            - StripPrefix=1
+
+        - id: anomalies-read
+          uri: http://monitoring-backend:8080
+          predicates:
+            - Path=/api/anomalies/**
+            - Method=GET
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 30
+                redis-rate-limiter.burstCapacity: 60
+                key-resolver: "#{@userKeyResolver}"
+            - AddRequestHeader=X-Gateway-Secret, ${GATEWAY_INTERNAL_SECRET}
+            - StripPrefix=1
+
+        - id: services-read
+          uri: http://monitoring-backend:8080
+          predicates:
+            - Path=/api/services
+            - Method=GET
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+                key-resolver: "#{@userKeyResolver}"
+            - AddRequestHeader=X-Gateway-Secret, ${GATEWAY_INTERNAL_SECRET}
+            - StripPrefix=1
+
+        - id: monitoring-health
+          uri: http://monitoring-backend:8080
+          predicates:
+            - Path=/api/monitoring/health
+          filters:
+            - StripPrefix=1
+
+        # Alerts Service Routes
+        - id: alert-rules
+          uri: http://alerts-service:8081
+          predicates:
+            - Path=/api/alert-rules/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 5
+                redis-rate-limiter.burstCapacity: 10
+                key-resolver: "#{@userKeyResolver}"
+            - AddRequestHeader=X-Gateway-Secret, ${GATEWAY_INTERNAL_SECRET}
+            - StripPrefix=1
+
+        - id: alert-history
+          uri: http://alerts-service:8081
+          predicates:
+            - Path=/api/alert-history
+            - Method=GET
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                key-resolver: "#{@userKeyResolver}"
+            - AddRequestHeader=X-Gateway-Secret, ${GATEWAY_INTERNAL_SECRET}
+            - StripPrefix=1
+
+        - id: alerts-health
+          uri: http://alerts-service:8081
+          predicates:
+            - Path=/api/alerts/health
+          filters:
+            - StripPrefix=1
+
+# Actuator configuration for health checks
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    org.springframework.cloud.gateway: DEBUG
+    org.springframework.web.reactive: DEBUG
+    reactor.netty: DEBUG

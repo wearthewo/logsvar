@@ -1,0 +1,11 @@
+spring:
+  config:
+    activate:
+      on-profile: docker
+      
+  kafka:
+    bootstrap-servers: kafka:29092
+    
+  data:
+    redis:
+      url: redis://redis:6379

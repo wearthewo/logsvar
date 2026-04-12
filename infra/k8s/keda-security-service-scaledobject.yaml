@@ -1,0 +1,17 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: security-service-scaler
+  namespace: monitoring-app
+spec:
+  scaleTargetRef:
+    name: security-service
+  minReplicaCount: 2
+  maxReplicaCount: 10
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka:9092
+        consumerGroup: security-service-consumer
+        topic: security.events
+        lagThreshold: "50"

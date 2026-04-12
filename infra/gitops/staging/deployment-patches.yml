@@ -1,0 +1,128 @@
+# Staging environment deployment patches
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring-backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: monitoring-backend
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "staging"
+            - name: DB_HOST
+              value: "mysql-staging"
+            - name: REDIS_HOST
+              value: "redis-staging"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka-staging:9092"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alerts-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: alerts-service
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "staging"
+            - name: DB_HOST
+              value: "mysql-staging"
+            - name: REDIS_HOST
+              value: "redis-staging"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka-staging:9092"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+spec:
+  template:
+    spec:
+      containers:
+        - name: api-gateway
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "staging"
+            - name: REDIS_HOST
+              value: "redis-staging"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-agent
+spec:
+  template:
+    spec:
+      containers:
+        - name: ai-agent
+          env:
+            - name: ENVIRONMENT
+              value: "staging"
+            - name: DB_HOST
+              value: "mysql-staging"
+            - name: REDIS_HOST
+              value: "redis-staging"
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka-staging:9092"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitoring-backend
+spec:
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alerts-service
+spec:
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+spec:
+  type: LoadBalancer
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-agent
+spec:
+  type: ClusterIP
