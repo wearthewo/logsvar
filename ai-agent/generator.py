@@ -111,8 +111,8 @@ class SyntheticEventGenerator:
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'payload': {
                 'method': random.choice(['GET', 'POST', 'PUT', 'DELETE']),
-                'url': f"http://{service}:8080{endpoint}",
-                'responseTime': response_time,
+                'endpoint': endpoint,
+                'latencyMs': response_time,
                 'statusCode': status_code,
                 'userAgent': random.choice(['Mozilla/5.0', 'curl/7.68.0', 'Python-requests/2.28.1']),
                 'ip': f"192.168.1.{random.randint(1, 254)}"
@@ -144,11 +144,11 @@ class SyntheticEventGenerator:
             'serviceName': service,
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'payload': {
-                'exceptionType': random.choice(exceptions),
+                'errorType': random.choice(exceptions),
                 'message': f"Error processing request in {service}",
                 'stackTrace': stack_traces,
-                'thread': random.choice(['http-nio-8080-exec-1', 'scheduler-1', 'kafka-consumer-1']),
-                'severity': random.choice(['ERROR', 'WARN', 'FATAL'])
+                'threadName': random.choice(['http-nio-8080-exec-1', 'scheduler-1', 'kafka-consumer-1']),
+                'occurrences': random.randint(1, 20)
             }
         }
     
@@ -171,12 +171,11 @@ class SyntheticEventGenerator:
             'serviceName': service,
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'payload': {
-                'cpuUsage': cpu_usage,
-                'memoryUsage': memory_usage,
-                'diskUsage': random.uniform(10, 80),
-                'networkIO': random.uniform(1000, 10000),
-                'activeConnections': random.randint(50, 500),
-                'gcCount': random.randint(0, 100)
+                'cpuPercent': cpu_usage,
+                'memoryUsedMb': int(memory_usage * 81.92),
+                'memoryTotalMb': 8192,
+                'activeThreads': random.randint(50, 500),
+                'gcPauseMs': random.randint(0, 100)
             }
         }
     
@@ -199,12 +198,12 @@ class SyntheticEventGenerator:
             'serviceName': service,
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'payload': {
-                'operation': random.choice(operations),
+                'queryType': random.choice(operations),
                 'table': random.choice(tables),
-                'queryTime': query_time,
-                'rowsAffected': random.randint(0, 1000),
-                'connectionPool': random.randint(1, 20),
-                'lockTime': random.uniform(0, 50)
+                'latencyMs': query_time,
+                'rowsScanned': random.randint(0, 1000),
+                'connectionPoolUsed': random.randint(1, 20),
+                'connectionPoolMax': 20
             }
         }
     

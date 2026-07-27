@@ -2,126 +2,118 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop, monitor-platform]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
-  build-and-test:
+  java:
+    name: Java (${{ matrix.service }})
     runs-on: ubuntu-latest
-
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: monitoring
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-
-      redis:
-        image: redis:7
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - monitoring-backend
+          - alerts-service
+          - api-gateway
+          - security-service
     steps:
-      # 1. Checkout
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Java
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          java-version: "17"
+          distribution: temurin
+          cache: maven
+          cache-dependency-path: ${{ matrix.service }}/pom.xml
 
-      # 3. Python
+      - name: Test and package
+        working-directory: ${{ matrix.service }}
+        run: mvn -B -ntp verify
+
+  python:
+    name: Python
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            ai-agent/requirements.txt
+            ai-agent/requirements-dev.txt
 
-      # 4. Cache Maven
-      - name: Cache Maven
-        uses: actions/cache@v3
+      - name: Install dependencies
+        run: python -m pip install -r ai-agent/requirements-dev.txt
+
+      - name: Test
+        working-directory: ai-agent
+        run: python -m pytest tests -v
+
+      - name: Compile check
+        run: python -m compileall -q ai-agent
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
         with:
-          path: ~/.m2
-          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
-          restore-keys: ${{ runner.os }}-maven
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
-      # 5. Cache Python
-      - name: Cache pip
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: ${{ runner.os }}-pip
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
 
-      # 6. Build Java services
-      - name: Build Java services
-        run: |
-          for service in monitoring-backend alerts-service api-gateway security-service; do
-            if [ -f "$service/pom.xml" ]; then
-              echo "Building $service"
-              (cd $service && mvn -B clean package -DskipTests)
-            else
-              echo "Skipping $service (no pom.xml)"
-            fi
-          done
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
 
-      # 7. Run Java tests
-      - name: Run Java tests
-        run: |
-          for service in monitoring-backend alerts-service api-gateway security-service; do
-            if [ -f "$service/pom.xml" ]; then
-              echo "Testing $service"
-              (cd $service && mvn -B test)
-            fi
-          done
+      - name: Test
+        working-directory: frontend
+        run: npm run test
 
-      # 8. Python setup
-      - name: Install Python deps
-        run: |
-          if [ -f "ai-agent/requirements.txt" ]; then
-            pip install -r ai-agent/requirements.txt
-          fi
-
-      # 9. Python tests
-      - name: Run Python tests
-        run: |
-          if [ -d "ai-agent/tests" ]; then
-            cd ai-agent
-            python -m pytest tests/ -v || echo "No tests found"
-          fi
-
-      # 10. Lint (safe)
-      - name: Lint Python
-        run: |
-          if [ -d "ai-agent" ]; then
-            pip install flake8
-            flake8 ai-agent || echo "Lint warnings ignored"
-          fi
+      - name: Build
+        working-directory: frontend
+        run: npm run build
 
   docker:
+    name: Docker (${{ matrix.service }})
     runs-on: ubuntu-latest
-    needs: build-and-test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
+    needs: [java, python, frontend]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - monitoring-backend
+          - alerts-service
+          - api-gateway
+          - security-service
+          - ai-agent
+          - frontend
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -129,21 +121,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GHCR
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & Push images
-        run: |
-          for service in monitoring-backend alerts-service api-gateway security-service; do
-            if [ -f "$service/Dockerfile" ]; then
-              echo "Building Docker image for $service"
-              docker build -t ghcr.io/${{ github.repository_owner }}/logsvar/$service:latest $service
-              docker push ghcr.io/${{ github.repository_owner }}/logsvar/$service:latest
-            else
-              echo "Skipping $service (no Dockerfile)"
-            fi
-          done
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.service }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ghcr.io/${{ github.repository_owner }}/logsvar/${{ matrix.service }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

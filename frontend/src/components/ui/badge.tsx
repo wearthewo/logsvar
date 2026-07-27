@@ -1,0 +1,3 @@
+import type { PropsWithChildren } from 'react'
+import { cn } from '@/lib/utils'
+export function Badge({ children, tone = 'neutral' }: PropsWithChildren<{ tone?: string }>) { const tones: Record<string,string> = { LOW:'bg-sky-500/15 text-sky-300', MEDIUM:'bg-amber-500/15 text-amber-300', HIGH:'bg-orange-500/15 text-orange-300', CRITICAL:'bg-red-500/15 text-red-300', UP:'bg-emerald-500/15 text-emerald-300', HEALTHY:'bg-emerald-500/15 text-emerald-300', DEGRADED:'bg-amber-500/15 text-amber-300', DOWN:'bg-red-500/15 text-red-300', neutral:'bg-muted text-muted-foreground' }; return <span className={cn('inline-flex rounded-full px-2 py-0.5 text-xs font-medium', tones[tone] || tones.neutral)}>{children}</span> }

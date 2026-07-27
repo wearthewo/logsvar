@@ -1,32 +1,39 @@
--- Security Service Initial Schema
--- Create tables for security incidents and audit logs
-
-CREATE TABLE IF NOT EXISTS security_incidents (
+CREATE TABLE security_incidents (
     id VARCHAR(36) PRIMARY KEY,
     user_id VARCHAR(255),
     incident_type VARCHAR(100) NOT NULL,
-    severity VARCHAR(50),
+    severity VARCHAR(50) NOT NULL,
+    route VARCHAR(500),
+    ip_address VARCHAR(45) NOT NULL,
     description TEXT,
-    status VARCHAR(50),
-    ip_address VARCHAR(45),
-    user_agent TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    resolved_at TIMESTAMP NULL,
-    INDEX idx_user_id (user_id),
-    INDEX idx_incident_type (incident_type),
+    metadata JSON,
+    correlated_anomaly_id VARCHAR(36),
+    created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+    resolved BOOLEAN NOT NULL DEFAULT FALSE,
+    INDEX idx_user_timestamp (user_id, created_at),
+    INDEX idx_type_timestamp (incident_type, created_at),
+    INDEX idx_severity_timestamp (severity, created_at),
+    INDEX idx_correlated_anomaly (correlated_anomaly_id),
+    INDEX idx_resolved (resolved),
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS security_audit (
+CREATE TABLE security_audit (
     id VARCHAR(36) PRIMARY KEY,
-    user_id VARCHAR(255),
+    user_id VARCHAR(255) NOT NULL,
     action VARCHAR(100) NOT NULL,
-    resource VARCHAR(255),
-    status VARCHAR(50),
-    details TEXT,
-    ip_address VARCHAR(45),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_user_id (user_id),
-    INDEX idx_action (action),
-    INDEX idx_created_at (created_at)
+    resource VARCHAR(500) NOT NULL,
+    status VARCHAR(50) NOT NULL,
+    ip_address VARCHAR(45) NOT NULL,
+    route VARCHAR(500),
+    method VARCHAR(16),
+    status_code INT,
+    latency_ms BIGINT,
+    timestamp DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    user_agent TEXT,
+    INDEX idx_user_timestamp (user_id, timestamp),
+    INDEX idx_action_timestamp (action, timestamp),
+    INDEX idx_status_timestamp (status, timestamp),
+    INDEX idx_timestamp (timestamp)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

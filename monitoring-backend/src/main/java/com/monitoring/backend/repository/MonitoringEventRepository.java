@@ -12,6 +12,8 @@ import java.util.List;
 
 @Repository
 public interface MonitoringEventRepository extends JpaRepository<MonitoringEvent, String> {
+    @Query("SELECT DISTINCT e.serviceName FROM MonitoringEvent e ORDER BY e.serviceName")
+    List<String> findDistinctServiceNames();
     
     List<MonitoringEvent> findByServiceNameOrderByReceivedAtDesc(String serviceName);
     

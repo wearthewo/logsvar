@@ -1,11 +1,13 @@
 package com.monitoring.security.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import java.util.Map;
 
 public class SecurityEventDto {
     private String userId;
     private String type;
     private String route;
+    @JsonAlias("ipAddress")
     private String ip;
     private String method;
     private Integer statusCode;

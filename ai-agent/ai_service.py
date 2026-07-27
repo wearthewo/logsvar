@@ -90,32 +90,35 @@ Baselines:
             result = response.json()
             ai_response = result.get("response", "").strip()
             
-            # Parse JSON response
-            try:
-                # Remove any markdown formatting
-                if ai_response.startswith("```json"):
-                    ai_response = ai_response[7:]
-                if ai_response.endswith("```"):
-                    ai_response = ai_response[:-3]
-                
-                parsed = json.loads(ai_response)
-                
-                # Validate required fields
-                required_fields = ["is_anomaly", "severity", "reason", "recommended_action"]
-                for field in required_fields:
-                    if field not in parsed:
-                        parsed[field] = "" if field in ["reason", "recommended_action"] else False
-                
-                # Validate severity
-                valid_severities = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
-                if parsed.get("severity") not in valid_severities:
-                    parsed["severity"] = "MEDIUM"
-                
-                return parsed
-                
-            except json.JSONDecodeError as e:
-                print(f"Failed to parse AI response: {ai_response}")
-                raise Exception(f"JSON parsing error: {e}")
+            return self._parse_ai_response(ai_response)
+
+    @staticmethod
+    def _parse_ai_response(ai_response: str) -> Dict[str, Any]:
+        """Parse and validate model output before it can be persisted."""
+        try:
+            if ai_response.startswith("```json"):
+                ai_response = ai_response[7:]
+            if ai_response.endswith("```"):
+                ai_response = ai_response[:-3]
+
+            parsed = json.loads(ai_response)
+            if not isinstance(parsed, dict):
+                raise ValueError("AI response must be a JSON object")
+
+            required_fields = ["is_anomaly", "severity", "reason", "recommended_action"]
+            for field in required_fields:
+                if field not in parsed:
+                    raise ValueError(f"AI response missing required field: {field}")
+            if not isinstance(parsed["is_anomaly"], bool):
+                raise ValueError("is_anomaly must be a boolean")
+
+            parsed["reason"] = str(parsed["reason"])[:500]
+            parsed["recommended_action"] = str(parsed["recommended_action"])[:500]
+            if parsed["severity"] not in ["LOW", "MEDIUM", "HIGH", "CRITICAL"]:
+                parsed["severity"] = "MEDIUM"
+            return parsed
+        except (json.JSONDecodeError, ValueError) as error:
+            raise ValueError(f"Invalid AI response: {error}") from error
     
     def _rule_based_detection(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
         """Fallback rule-based anomaly detection"""

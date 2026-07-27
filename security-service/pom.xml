@@ -19,7 +19,6 @@
     <description>Security Event Processing Service</description>
 
     <properties>
-        <spring-kafka.version>3.1.4</spring-kafka.version>
         <resilience4j.version>2.1.0</resilience4j.version>
     </properties>
 
@@ -34,7 +33,6 @@
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
-            <version>${spring-kafka.version}</version>
         </dependency>
 
         <!-- Spring Data JPA -->
@@ -45,9 +43,17 @@
 
         <!-- MySQL Driver -->
         <dependency>
-            <groupId>mysql</groupId>
-            <artifactId>mysql-connector-java</artifactId>
-            <version>8.0.33</version>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-mysql</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
         </dependency>
 
         <!-- Redis -->

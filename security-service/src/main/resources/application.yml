@@ -6,7 +6,7 @@ spring:
     name: security-service
   
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/monitoring}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/security}
     username: ${SPRING_DATASOURCE_USERNAME:monitoring}
     password: ${SPRING_DATASOURCE_PASSWORD:secret}
     driver-class-name: com.mysql.cj.jdbc.Driver

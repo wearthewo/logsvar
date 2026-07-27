@@ -1,6 +1,6 @@
 package com.monitoring.backend.controller;
 
-import com.monitoring.backend.dto.EventDto;
+import com.monitoring.backend.dto.EventRequest;
 import com.monitoring.backend.service.EventService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
@@ -24,21 +24,11 @@ public class EventController {
     }
     
     @PostMapping("/events")
-    public ResponseEntity<Map<String, String>> createEvent(@Valid @RequestBody EventDto event) {
-        logger.info("Received event submission: {}", event.getId());
-        
-        try {
-            eventService.processEvent(event);
-            
-            // Return immediately with eventId, processing continues asynchronously
-            return ResponseEntity.status(HttpStatus.OK)
-                    .body(Map.of("eventId", event.getId()));
-                    
-        } catch (Exception e) {
-            logger.error("Failed to process event {}: {}", event.getId(), e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Internal server error"));
-        }
+    public ResponseEntity<Map<String, String>> createEvent(@Valid @RequestBody EventRequest event) {
+        String eventId = eventService.processEvent(event);
+        logger.info("Accepted event submission: {}", eventId);
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+                .body(Map.of("eventId", eventId, "status", "accepted"));
     }
     
     @GetMapping("/health")

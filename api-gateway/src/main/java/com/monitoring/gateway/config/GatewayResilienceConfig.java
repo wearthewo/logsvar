@@ -51,6 +51,18 @@ public class GatewayResilienceConfig {
     }
 
     @Bean
+    public CircuitBreaker kafkaCircuitBreaker(CircuitBreakerRegistry registry) {
+        CircuitBreakerConfig config = CircuitBreakerConfig.custom()
+                .failureRateThreshold(50)
+                .waitDurationInOpenState(Duration.ofSeconds(10))
+                .slidingWindowSize(20)
+                .minimumNumberOfCalls(10)
+                .build();
+
+        return registry.circuitBreaker("kafka", config);
+    }
+
+    @Bean
     public Retry monitoringBackendRetry(RetryRegistry registry) {
         RetryConfig config = RetryConfig.custom()
                 .maxAttempts(3)
@@ -81,5 +93,16 @@ public class GatewayResilienceConfig {
                 .build();
         
         return registry.retry("ai-agent", config);
+    }
+
+    @Bean
+    public Retry kafkaRetry(RetryRegistry registry) {
+        RetryConfig config = RetryConfig.custom()
+                .maxAttempts(3)
+                .waitDuration(Duration.ofMillis(500))
+                .retryOnException(e -> true)
+                .build();
+
+        return registry.retry("kafka", config);
     }
 }

@@ -72,10 +72,12 @@ async def health_check():
         mysql_status = "connected" if db_manager.is_connected() else "disconnected"
         model_status = "available" if ai_service.is_model_available() else "unavailable"
         
-        overall_status = "ok" if all(
-            status in ["connected", "available"]
-            for status in [kafka_status, redis_status, mysql_status, model_status]
-        ) else "error"
+        infrastructure_ready = all(
+            status == "connected" for status in [kafka_status, redis_status, mysql_status]
+        )
+        overall_status = "ok" if infrastructure_ready and model_status == "available" else (
+            "degraded" if infrastructure_ready else "error"
+        )
         
         return {
             "status": overall_status,
@@ -114,8 +116,7 @@ async def process_event(event_data: Dict[str, Any]) -> bool:
     
     # Step 3-4: Build prompt and call AI
     try:
-        async with metrics.ai_call_timer():
-            ai_result = await ai_service.detect_anomaly(event_data)
+        ai_result = await ai_service.detect_anomaly(event_data)
         
         await metrics.increment_events_processed(service_name, event_type)
         
@@ -127,7 +128,7 @@ async def process_event(event_data: Dict[str, Any]) -> bool:
         
         # Step 6: Write anomaly to MySQL
         anomaly_record = {
-            "id": str(uuid.uuid4()),
+            "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"logsvar:anomaly:{event_id}")),
             "event_id": event_id,
             "service_name": service_name,
             "severity": ai_result.get("severity"),
@@ -138,15 +139,20 @@ async def process_event(event_data: Dict[str, Any]) -> bool:
         
         await db_manager.save_anomaly(anomaly_record)
         print(f"Saved anomaly {anomaly_record['id']} to database")
+
+        message_record = {
+            **anomaly_record,
+            "detected_at": anomaly_record["detected_at"].isoformat(timespec="milliseconds") + "Z"
+        }
         
-        # Step 7: Cache the result
+        # Step 7: Publish to monitoring.anomalies topic
+        await kafka_client.publish_anomaly(message_record)
+        
+        # Step 8: Publish to Redis live channel
+        await cache_manager.publish_live_anomaly(message_record)
+
+        # Step 9: Cache only after every durable/published step succeeds.
         await cache_manager.cache_anomaly_result(event_id, ai_result)
-        
-        # Step 8: Publish to monitoring.anomalies topic
-        await kafka_client.publish_anomaly(anomaly_record)
-        
-        # Step 9: Publish to Redis live channel
-        await cache_manager.publish_live_anomaly(anomaly_record)
         
         await metrics.increment_anomalies_detected(
             anomaly_record["service_name"],
@@ -176,7 +182,14 @@ async def consume_events():
         print("Starting Kafka consumer loop...")
         async for msg in consumer:
             try:
-                event_data = json.loads(msg.value.decode('utf-8'))
+                # The Kafka client already deserializes JSON values. Keep a bytes
+                # fallback for tests or alternate consumers that provide raw data.
+                if isinstance(msg.value, (bytes, bytearray)):
+                    event_data = json.loads(msg.value.decode('utf-8'))
+                elif isinstance(msg.value, dict):
+                    event_data = msg.value
+                else:
+                    raise ValueError("Monitoring event must be a JSON object")
                 event_id = event_data.get('id', 'unknown')
                 
                 print(f"Received event {event_id} from partition {msg.partition}, offset {msg.offset}")

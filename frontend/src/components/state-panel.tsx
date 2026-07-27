@@ -1,0 +1,6 @@
+import { AlertTriangle, Inbox, LoaderCircle } from 'lucide-react'
+import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+export function LoadingState() { return <div className="flex min-h-48 items-center justify-center text-muted-foreground"><LoaderCircle className="mr-2 animate-spin"/>Loading data…</div> }
+export function EmptyState({ title='Nothing here yet', detail='Data will appear when the platform receives events.' }: { title?:string; detail?:string }) { return <Card className="flex min-h-48 flex-col items-center justify-center p-8 text-center"><Inbox className="mb-3 text-muted-foreground"/><h3 className="font-medium">{title}</h3><p className="mt-1 max-w-md text-sm text-muted-foreground">{detail}</p></Card> }
+export function ErrorState({ error, retry }: { error:Error; retry?:()=>void }) { return <Card className="border-red-900/60 p-5"><div className="flex gap-3"><AlertTriangle className="text-red-400"/><div><h3 className="font-medium">Unable to load data</h3><p className="mt-1 text-sm text-muted-foreground">{error.message}</p>{retry && <Button className="mt-3" size="sm" variant="outline" onClick={retry}>Try again</Button>}</div></div></Card> }

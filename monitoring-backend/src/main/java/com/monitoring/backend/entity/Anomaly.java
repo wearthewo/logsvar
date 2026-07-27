@@ -9,13 +9,13 @@ import java.time.Instant;
 @Table(name = "anomalies")
 public class Anomaly {
     @Id
-    @Column(name = "id")
+    @Column(name = "id", length = 36)
     private String id;
 
-    @Column(name = "event_id", nullable = false)
+    @Column(name = "event_id", nullable = false, length = 36)
     private String eventId;
 
-    @Column(name = "service_name", nullable = false)
+    @Column(name = "service_name", nullable = false, length = 128)
     private String serviceName;
 
     @Enumerated(EnumType.STRING)

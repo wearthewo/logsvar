@@ -9,10 +9,10 @@ import java.time.Instant;
 @Table(name = "monitoring_events")
 public class MonitoringEvent {
     @Id
-    @Column(name = "id")
+    @Column(name = "id", length = 36)
     private String id;
 
-    @Column(name = "service_name", nullable = false)
+    @Column(name = "service_name", nullable = false, length = 128)
     private String serviceName;
 
     @Enumerated(EnumType.STRING)

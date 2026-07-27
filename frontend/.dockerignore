@@ -1,0 +1,6 @@
+node_modules
+.npm-cache*
+*.tsbuildinfo
+dist
+test-results
+playwright-report

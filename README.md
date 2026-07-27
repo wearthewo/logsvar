@@ -1,5 +1,26 @@
 # AI Monitoring Platform
 
+## Run the complete app locally
+
+Docker Desktop is the only required runtime. The first run builds every service, so it can take several minutes.
+
+```bash
+cd infra
+docker compose down -v # required once when upgrading from the old shared schema
+docker compose up --build
+```
+
+Open `http://localhost:5173` and sign in with `demo` / `demo`. Keycloak is available at
+`http://localhost:8180` (`admin` / `admin`), the API Gateway at `http://localhost:8082`, and Grafana at
+`http://localhost:3000` (`admin` / `admin`). Ollama is optional; without it the AI agent reports a degraded
+model state and continues using deterministic anomaly rules.
+
+To stop without deleting data, run `docker compose down`. To recreate clean databases and re-import the
+local Keycloak realm, run `docker compose down -v` before starting again.
+
+After the stack is healthy, run `powershell -ExecutionPolicy Bypass -File .\smoke-test.ps1` from the
+`infra` directory to authenticate, check aggregate health, and submit a test event through the gateway.
+
 A full-stack AI-powered observability platform that ingests monitoring events, detects anomalies via AI, and streams live alerts through Kafka, MySQL, Redis, and a comprehensive monitoring stack.
 ### Architecture
 
@@ -15,7 +36,7 @@ The system consists of 5 microservices connected through shared infrastructure c
     - Connects to: Kafka (consumes anomalies, produces alerts), MySQL (stores alert rules/history), Redis (caching), Prometheus (metrics)
     - Purpose: Alert rule evaluation and notifications
 
-3. **api-gateway** (Port 8080)
+3. **api-gateway** (Port 8082)
     - Connects to: Redis (rate limiting), Kafka (publishes security events), Prometheus (metrics)
     - Purpose: API routing, rate limiting, authentication
 
@@ -30,7 +51,7 @@ The system consists of 5 microservices connected through shared infrastructure c
 **Infrastructure Components:**
 
 - **Kafka** (Port 9092) - Message broker for event streaming between services
-- **MySQL** (Port 3306) - Relational database for persistent data storage
+- **MySQL** (Host port 3307, container port 3306) - Relational database for persistent data storage
 - **Redis** (Port 6379) - In-memory cache for performance and rate limiting
 - **Ollama** (Port 11434) - AI model server for anomaly detection
 
@@ -356,7 +377,7 @@ CACHE_TTL_SECONDS: int = 300
 **Services:**
 - Zookeeper - Kafka dependency
 - Kafka - Message broker (Port 9092 external, 29092 internal)
-- MySQL - Database (Port 3306)
+- MySQL - Database (Host port 3307, container port 3306)
 - Redis - Cache (Port 6379)
 - Prometheus - Metrics collection (Port 9090)
 - Grafana - Metrics visualization (Port 3000)
@@ -712,5 +733,3 @@ docker exec -it kafka kafka-topics --list --bootstrap-server localhost:9092
 # View messages
 docker exec -it kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic monitoring.events --from-beginning
 ```
-
-

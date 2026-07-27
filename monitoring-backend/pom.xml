@@ -19,7 +19,6 @@
     <description>Monitoring Backend Service</description>
 
     <properties>
-        <spring-kafka.version>3.1.4</spring-kafka.version>
         <resilience4j.version>2.1.0</resilience4j.version>
     </properties>
     
@@ -53,7 +52,6 @@
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
-            <version>${spring-kafka.version}</version>
         </dependency>
 
         <dependency>

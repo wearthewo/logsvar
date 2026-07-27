@@ -79,10 +79,12 @@ public class SecurityEventService {
         if (event.getStatusCode() != null && event.getStatusCode() >= 400) {
             return "MEDIUM";
         }
-        if ("UNAUTHORIZED_ACCESS".equals(event.getType()) || "BRUTE_FORCE".equals(event.getType())) {
+        if (event.getType() != null && (event.getType().contains("UNAUTHORIZED") || event.getType().contains("BRUTE_FORCE"))) {
             return "CRITICAL";
         }
-        if ("SUSPICIOUS_ACTIVITY".equals(event.getType())) {
+        if (event.getType() != null && (event.getType().contains("SUSPICIOUS") ||
+                event.getType().contains("FORBIDDEN") || event.getType().contains("RATE_LIMIT") ||
+                event.getType().contains("EXCESSIVE"))) {
             return "HIGH";
         }
         return "LOW";

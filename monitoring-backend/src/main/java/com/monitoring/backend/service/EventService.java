@@ -2,7 +2,8 @@ package com.monitoring.backend.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.monitoring.backend.dto.EventDto;
+import com.monitoring.backend.dto.EventEnvelope;
+import com.monitoring.backend.dto.EventRequest;
 import com.monitoring.backend.entity.MonitoringEvent;
 import com.monitoring.backend.kafka.EventProducer;
 import com.monitoring.backend.repository.MonitoringEventRepository;
@@ -10,7 +11,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.concurrent.CompletableFuture;
+import java.time.Instant;
+import java.util.UUID;
 
 @Service
 public class EventService {
@@ -29,45 +31,46 @@ public class EventService {
         this.objectMapper = objectMapper;
     }
     
-    public CompletableFuture<String> processEvent(EventDto eventDto) {
+    public String processEvent(EventRequest request) {
+        EventEnvelope eventDto = new EventEnvelope(
+            request.id() == null || request.id().isBlank() ? UUID.randomUUID().toString() : request.id(),
+            request.serviceName(),
+            request.eventType(),
+            request.timestamp() == null ? Instant.now() : request.timestamp(),
+            request.payload()
+        );
         logger.info("Processing event {} of type {} from service {}", 
-                   eventDto.getId(), eventDto.getEventType(), eventDto.getServiceName());
+                   eventDto.id(), eventDto.eventType(), eventDto.serviceName());
         
         try {
             // Save to MySQL
             MonitoringEvent monitoringEvent = convertToEntity(eventDto);
             eventRepository.save(monitoringEvent);
             
-            logger.info("Saved event {} to database", eventDto.getId());
+            logger.info("Saved event {} to database", eventDto.id());
             
             // Send to Kafka
-            CompletableFuture<String> kafkaFuture = eventProducer.sendEvent(eventDto)
-                .thenApply(result -> {
-                    logger.info("Event {} successfully published to Kafka", eventDto.getId());
-                    return eventDto.getId();
-                })
-                .exceptionally(throwable -> {
-                    logger.error("Failed to publish event {} to Kafka: {}", 
-                                eventDto.getId(), throwable.getMessage());
-                    throw new RuntimeException("Failed to publish event to Kafka", throwable);
-                });
-            
-            return kafkaFuture;
+            eventProducer.sendEvent(eventDto).whenComplete((result, throwable) -> {
+                if (throwable != null) {
+                    logger.error("Failed to publish event {} to Kafka: {}", eventDto.id(), throwable.getMessage());
+                }
+            });
+            return eventDto.id();
             
         } catch (Exception e) {
-            logger.error("Failed to process event {}: {}", eventDto.getId(), e.getMessage());
-            return CompletableFuture.failedFuture(e);
+            logger.error("Failed to process event {}: {}", eventDto.id(), e.getMessage());
+            throw new RuntimeException("Failed to persist event", e);
         }
     }
     
-    private MonitoringEvent convertToEntity(EventDto eventDto) {
+    private MonitoringEvent convertToEntity(EventEnvelope eventDto) {
         try {
             String payloadJson = objectMapper.writeValueAsString(eventDto);
             
             MonitoringEvent entity = new MonitoringEvent();
-            entity.setId(eventDto.getId());
-            entity.setServiceName(eventDto.getServiceName());
-            entity.setEventType(MonitoringEvent.EventType.valueOf(eventDto.getEventType().name()));
+            entity.setId(eventDto.id());
+            entity.setServiceName(eventDto.serviceName());
+            entity.setEventType(MonitoringEvent.EventType.valueOf(eventDto.eventType().name()));
             entity.setPayload(payloadJson);
             
             return entity;

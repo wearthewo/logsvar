@@ -3,7 +3,7 @@ package com.monitoring.backend.kafka;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.monitoring.backend.config.KafkaTopicsConfig;
-import com.monitoring.backend.dto.EventDto;
+import com.monitoring.backend.dto.EventEnvelope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -29,31 +29,31 @@ public class EventProducer {
         this.kafkaTopicsConfig = kafkaTopicsConfig;
     }
     
-    public CompletableFuture<SendResult<String, String>> sendEvent(EventDto event) {
+    public CompletableFuture<SendResult<String, String>> sendEvent(EventEnvelope event) {
         try {
             String eventJson = objectMapper.writeValueAsString(event);
             
             logger.info("Sending event {} to topic {} with key {}", 
-                       event.getId(), kafkaTopicsConfig.eventsTopic, event.getId());
+                       event.id(), kafkaTopicsConfig.eventsTopic, event.id());
             
             CompletableFuture<SendResult<String, String>> future = 
-                kafkaTemplate.send(kafkaTopicsConfig.eventsTopic, event.getId(), eventJson);
+                kafkaTemplate.send(kafkaTopicsConfig.eventsTopic, event.id(), eventJson);
             
             future.whenComplete((result, ex) -> {
                 if (ex == null) {
                     logger.info("Event {} sent successfully to partition {} offset {}", 
-                               event.getId(), 
+                               event.id(),
                                result.getRecordMetadata().partition(),
                                result.getRecordMetadata().offset());
                 } else {
-                    logger.error("Failed to send event {}: {}", event.getId(), ex.getMessage());
+                    logger.error("Failed to send event {}: {}", event.id(), ex.getMessage());
                 }
             });
             
             return future;
             
         } catch (JsonProcessingException e) {
-            logger.error("Failed to serialize event {}: {}", event.getId(), e.getMessage());
+            logger.error("Failed to serialize event {}: {}", event.id(), e.getMessage());
             return CompletableFuture.failedFuture(e);
         }
     }

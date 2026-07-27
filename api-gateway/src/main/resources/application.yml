@@ -26,6 +26,8 @@ spring:
   
   cloud:
     gateway:
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin, RETAIN_FIRST
       # Basic routes to backend services with rate limiting
       routes:
         # Monitoring Backend Routes
@@ -41,7 +43,6 @@ spring:
                 redis-rate-limiter.burstCapacity: 40
                 key-resolver: "#{@userKeyResolver}"
             - AddRequestHeader=X-Gateway-Secret, ${GATEWAY_INTERNAL_SECRET}
-            - StripPrefix=1
 
         - id: anomalies-read
           uri: http://monitoring-backend:8080
@@ -55,7 +56,6 @@ spring:
                 redis-rate-limiter.burstCapacity: 60
                 key-resolver: "#{@userKeyResolver}"
             - AddRequestHeader=X-Gateway-Secret, ${GATEWAY_INTERNAL_SECRET}
-            - StripPrefix=1
 
         - id: services-read
           uri: http://monitoring-backend:8080
@@ -69,14 +69,6 @@ spring:
                 redis-rate-limiter.burstCapacity: 40
                 key-resolver: "#{@userKeyResolver}"
             - AddRequestHeader=X-Gateway-Secret, ${GATEWAY_INTERNAL_SECRET}
-            - StripPrefix=1
-
-        - id: monitoring-health
-          uri: http://monitoring-backend:8080
-          predicates:
-            - Path=/api/monitoring/health
-          filters:
-            - StripPrefix=1
 
         # Alerts Service Routes
         - id: alert-rules
@@ -90,7 +82,6 @@ spring:
                 redis-rate-limiter.burstCapacity: 10
                 key-resolver: "#{@userKeyResolver}"
             - AddRequestHeader=X-Gateway-Secret, ${GATEWAY_INTERNAL_SECRET}
-            - StripPrefix=1
 
         - id: alert-history
           uri: http://alerts-service:8081
@@ -104,14 +95,18 @@ spring:
                 redis-rate-limiter.burstCapacity: 20
                 key-resolver: "#{@userKeyResolver}"
             - AddRequestHeader=X-Gateway-Secret, ${GATEWAY_INTERNAL_SECRET}
-            - StripPrefix=1
 
-        - id: alerts-health
-          uri: http://alerts-service:8081
+        - id: security-incidents
+          uri: http://security-service:8083
           predicates:
-            - Path=/api/alerts/health
+            - Path=/api/security/incidents/**
           filters:
-            - StripPrefix=1
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                key-resolver: "#{@userKeyResolver}"
+            - AddRequestHeader=X-Gateway-Secret, ${GATEWAY_INTERNAL_SECRET}
 
 # Actuator configuration for health checks
 management:

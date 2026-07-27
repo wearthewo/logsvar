@@ -21,6 +21,17 @@ public interface AlertHistoryRepository extends JpaRepository<AlertHistory, Stri
     List<AlertHistory> findByAnomalyId(String anomalyId);
     
     List<AlertHistory> findByStatus(AlertHistory.Status status);
+
+    @Query("SELECT h FROM AlertHistory h WHERE " +
+           "(:ruleId IS NULL OR h.ruleId = :ruleId) AND " +
+           "(:status IS NULL OR h.status = :status) AND " +
+           "(:from IS NULL OR h.sentAt >= :from) AND " +
+           "(:to IS NULL OR h.sentAt <= :to)")
+    Page<AlertHistory> findByFilters(@Param("ruleId") String ruleId,
+                                     @Param("status") AlertHistory.Status status,
+                                     @Param("from") Instant from,
+                                     @Param("to") Instant to,
+                                     Pageable pageable);
     
     @Query("SELECT h FROM AlertHistory h WHERE h.sentAt >= :from AND h.sentAt <= :to")
     List<AlertHistory> findBySentAtBetween(@Param("from") Instant from, @Param("to") Instant to);

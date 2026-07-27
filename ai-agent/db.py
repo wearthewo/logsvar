@@ -44,6 +44,11 @@ class DatabaseManager:
               (id, event_id, service_name, severity,
                reason, recommended_action, detected_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+              severity = VALUES(severity),
+              reason = VALUES(reason),
+              recommended_action = VALUES(recommended_action),
+              detected_at = VALUES(detected_at)
         """
         
         async with self.pool.acquire() as conn:

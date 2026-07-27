@@ -19,6 +19,9 @@ public class ServiceHealthService {
     
     @Autowired
     private AnomalyRepository anomalyRepository;
+
+    @Autowired
+    private com.monitoring.backend.repository.MonitoringEventRepository eventRepository;
     
     public List<ServiceSummary> getServiceSummaries() {
         long startTime = System.currentTimeMillis();
@@ -36,11 +39,12 @@ public class ServiceHealthService {
             Map<String, List<Anomaly>> anomaliesByService = recentAnomalies.stream()
                 .collect(Collectors.groupingBy(Anomaly::getServiceName));
             
+            Set<String> serviceNames = new TreeSet<>(eventRepository.findDistinctServiceNames());
+            serviceNames.addAll(anomaliesByService.keySet());
             List<ServiceSummary> summaries = new ArrayList<>();
-            
-            for (Map.Entry<String, List<Anomaly>> entry : anomaliesByService.entrySet()) {
-                String serviceName = entry.getKey();
-                List<Anomaly> serviceAnomalies = entry.getValue();
+
+            for (String serviceName : serviceNames) {
+                List<Anomaly> serviceAnomalies = anomaliesByService.getOrDefault(serviceName, List.of());
                 
                 // Get anomalies in last 30 minutes for health status
                 List<Anomaly> recent30MinAnomalies = serviceAnomalies.stream()

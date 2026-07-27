@@ -15,11 +15,14 @@ import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.Map;import java.util.concurrent.atomic.AtomicLong;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 public class SecurityAuditFilter implements GlobalFilter, Ordered {
@@ -71,17 +74,19 @@ public class SecurityAuditFilter implements GlobalFilter, Ordered {
         ServerHttpResponse response = exchange.getResponse();
 
         // Extract user information from JWT (already validated by OAuth2 filter)
-        String userId = extractUserId(request);
         String ipAddress = getClientIpAddress(request);
         String route = request.getPath().value();
         String method = request.getMethod().name();
 
         // Log request details (without sensitive data)
-        logger.info("Security audit: userId={}, route={}, method={}, ip={}", 
-                   userId, route, method, ipAddress);
-
-        // Continue with the request and capture response
-        return chain.filter(exchange).doFinally(signalType -> {
+        return exchange.getPrincipal()
+          .map(principal -> principal instanceof JwtAuthenticationToken jwt
+                  ? Optional.ofNullable(jwt.getToken().getClaimAsString("preferred_username")).orElse(jwt.getName())
+                  : principal.getName())
+          .defaultIfEmpty("anonymous")
+          .flatMap(userId -> {
+            logger.info("Security audit: userId={}, route={}, method={}, ip={}", userId, route, method, ipAddress);
+            return chain.filter(exchange).doFinally(signalType -> {
             long endTime = System.currentTimeMillis();
             long latencyMs = endTime - startTime;
             int statusCode = response.getStatusCode() != null ? response.getStatusCode().value() : 0;
@@ -94,13 +99,8 @@ public class SecurityAuditFilter implements GlobalFilter, Ordered {
 
             // Update metrics
             updateSecurityMetrics(route, statusCode, userId);
-        });
-    }
-
-    private String extractUserId(ServerHttpRequest request) {
-        // JWT is already validated by OAuth2 filter, extract user ID from claims
-        // This would be available in the security context
-        return request.getHeaders().getFirst(USER_ID_HEADER);
+            });
+          });
     }
 
     private String getClientIpAddress(ServerHttpRequest request) {

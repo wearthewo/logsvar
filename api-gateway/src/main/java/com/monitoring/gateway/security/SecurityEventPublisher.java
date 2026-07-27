@@ -7,6 +7,7 @@ import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.retry.Retry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Service;
 
@@ -24,8 +25,8 @@ public class SecurityEventPublisher {
     private final KafkaTopicsConfig kafkaTopicsConfig;
 
     public SecurityEventPublisher(KafkaTemplate<String, String> kafkaTemplate,
-                                 CircuitBreaker kafkaCircuitBreaker,
-                                 Retry kafkaRetry,
+                                 @Qualifier("kafkaCircuitBreaker") CircuitBreaker kafkaCircuitBreaker,
+                                 @Qualifier("kafkaRetry") Retry kafkaRetry,
                                  ObjectMapper objectMapper,
                                  KafkaTopicsConfig kafkaTopicsConfig) {
         this.kafkaTemplate = kafkaTemplate;
