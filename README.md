@@ -1,5 +1,7 @@
 # AI Monitoring Platform
 
+![Logsvar system overview](docs/images/monitor-platform.jpg)
+
 ## Run the complete app locally
 
 Docker Desktop is the only required runtime. The first run builds every service, so it can take several minutes.
